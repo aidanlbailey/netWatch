@@ -1,0 +1,6 @@
+config.json
+netwatch.db
+*.log
+*.log.*
+__pycache__/
+venv/

@@ -1,0 +1,12 @@
+{
+  "subnet": null,
+  "scan_interval_sec": 12,
+  "offline_after_misses": 25,
+  "bind_host": "0.0.0.0",
+  "bind_port": 8080,
+  "password_hash": "",
+  "secret_key": "",
+  "db_path": "netwatch.db",
+  "discord": { "webhook_url": "", "mention_user_id": "" },
+  "smtp": { "host": "", "port": 587, "username": "", "password": "", "from_addr": "", "to_addr": "" }
+}

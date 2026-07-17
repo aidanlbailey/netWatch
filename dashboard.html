@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>netWatch</title>
+<style>
+  body { font-family: system-ui, sans-serif; color: #222; max-width: 60rem; margin: 1.5rem auto; padding: 0 1rem; }
+  header { display: flex; justify-content: space-between; align-items: baseline; }
+  h1 { font-size: 1.3rem; margin: 0; }
+  h2 { font-size: 1rem; margin: 2rem 0 .5rem; }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #ddd; white-space: nowrap; }
+  th { font-weight: 600; }
+  tr.offline td { color: #999; }
+  .nick { cursor: pointer; text-decoration: underline dotted; }
+  .nick input { font: inherit; padding: .1rem .3rem; width: 9rem; }
+  ul { padding-left: 1.2rem; font-size: .9rem; }
+  li { margin: .2rem 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>netWatch</h1>
+  <div>
+    <button id="testNotify" title="Send a test ping through the configured channels">Test notification</button>
+    <button onclick="window.open('https://github.com/aidanlbailey/netWatch#readme')">Help</button>
+    <form method="post" action="/logout" style="display:inline"><button>Log out</button></form>
+  </div>
+</header>
+<p title="How many consecutive missed sweeps (one every 12 s) before a device is marked offline and a leave notification fires. 3-5 (about 1 min) is fine for always-on devices like cameras and smart plugs. 20-30 (about 4-6 min) is recommended if you track phones: they stop answering the network for short stretches while asleep, and lower values cause false leave alerts.">
+  Mark offline after
+  <input type="range" id="misses" min="1" max="50" step="1">
+  <span id="missesLabel"></span>
+</p>
+<h2>Devices</h2>
+<div class="tablewrap"><table>
+  <thead><tr><th>Status</th><th>Nickname</th><th>IP</th><th>MAC</th><th>Vendor</th><th>First seen</th><th>Last seen</th><th>Notify<br><button id="notifyAll" title="Select or deselect all devices">all</button></th></tr></thead>
+  <tbody id="devices"></tbody>
+</table></div>
+<h2>Recent activity</h2>
+<ul id="events"></ul>
+<script>
+let serverNow = Date.now() / 1000;
+let scanInterval = 12;
+
+const slider = document.getElementById("misses");
+const missesLabel = document.getElementById("missesLabel");
+
+function missesText(v) {
+  const s = v * scanInterval;
+  return `${v} missed sweeps (~${s < 90 ? s + " s" : Math.round(s / 60) + " min"})`;
+}
+
+let lastDevices = [];
+document.getElementById("testNotify").onclick = async () => {
+  const res = await fetch("/api/test-notify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const d = await res.json();
+  alert(d.results.length
+    ? d.results.map(r => r.channel + ": " + (r.error ? "FAILED - " + r.error : "sent")).join("\n")
+    : "No notification channels configured. Add a Discord webhook or SMTP settings first.");
+};
+
+document.getElementById("notifyAll").onclick = async () => {
+  const allOn = lastDevices.every(d => d.notify);
+  await fetch("/api/notify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mac: "*", notify: !allOn }),
+  });
+  refresh();
+};
+
+slider.addEventListener("input", () => { missesLabel.textContent = missesText(slider.value); });
+slider.addEventListener("change", () => fetch("/api/settings", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ offline_after_misses: Number(slider.value) }),
+}));
+
+function ago(ts) {
+  const s = Math.max(0, serverNow - ts);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + " min ago";
+  if (s < 86400) return Math.floor(s / 3600) + " h ago";
+  return Math.floor(s / 86400) + " d ago";
+}
+
+function td(text, cls) {
+  const el = document.createElement("td");
+  el.textContent = text ?? "";
+  if (cls) el.className = cls;
+  return el;
+}
+
+function editNickname(cell, dev) {
+  const input = document.createElement("input");
+  input.value = dev.nickname || "";
+  cell.replaceChildren(input);
+  input.focus();
+  let done = false;
+  const save = async () => {
+    if (done) return; done = true;
+    await fetch("/api/nickname", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mac: dev.mac, nickname: input.value }),
+    });
+    refresh();
+  };
+  input.addEventListener("blur", save);
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") save();
+    if (e.key === "Escape") { done = true; refresh(); }
+  });
+}
+
+async function refresh() {
+  const res = await fetch("/api/devices");
+  if (res.status === 401) { location = "/login"; return; }
+  const data = await res.json();
+  serverNow = data.now;
+  scanInterval = data.scan_interval_sec;
+  lastDevices = data.devices;
+  if (document.activeElement !== slider) {
+    slider.value = data.offline_after_misses;
+    missesLabel.textContent = missesText(slider.value);
+  }
+
+  const tbody = document.getElementById("devices");
+  tbody.replaceChildren(...data.devices.map(d => {
+    const tr = document.createElement("tr");
+    tr.className = d.online ? "online" : "offline";
+    const nickCell = td(d.nickname || "add name", "nick");
+    nickCell.title = "Click to rename";
+    nickCell.onclick = () => editNickname(nickCell, d);
+    const chk = document.createElement("input");
+    chk.type = "checkbox";
+    chk.checked = !!d.notify;
+    chk.title = "Notify on join/leave";
+    chk.onchange = () => fetch("/api/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mac: d.mac, notify: chk.checked }),
+    });
+    const chkCell = document.createElement("td");
+    chkCell.append(chk);
+    tr.append(td(d.online ? "online" : "offline"), nickCell, td(d.ip), td(d.mac),
+              td(d.vendor || ""), td(ago(d.first_seen)),
+              td(d.online ? "—" : ago(d.last_seen)), chkCell);
+    return tr;
+  }));
+
+  document.getElementById("events").replaceChildren(...data.events.map(e => {
+    const li = document.createElement("li");
+    li.textContent = `${e.kind === "join" ? "Joined" : "Left"}: ${e.nickname || e.vendor || e.mac} — ${ago(e.ts)}`;
+    return li;
+  }));
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>
