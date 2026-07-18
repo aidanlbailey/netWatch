@@ -6,6 +6,7 @@ import logging
 import re
 import socket
 import sqlite3
+import struct
 import subprocess
 import threading
 import time
@@ -257,6 +258,100 @@ def lookup_vendors(conn):
                 conn.execute("UPDATE devices SET vendor=? WHERE mac=?", (vendor, mac))
                 conn.commit()
         time.sleep(1)
+
+    _lookup_names(conn)
+
+# ---------------------------------------------------------------- name resolution
+
+_name_attempted = set()
+
+
+def _lookup_names(conn):
+    """Fill in auto_name via reverse DNS / NetBIOS. Best-effort, stdlib only."""
+    with DB_LOCK:
+        rows = [(r["mac"], r["ip"]) for r in
+                 conn.execute("SELECT mac, ip FROM devices WHERE auto_name IS NULL")]
+    for mac, ip in [(m, i) for m, i in rows if m not in _name_attempted][:3]:
+        _name_attempted.add(mac)
+        name = resolve_name(ip) if ip else None
+        if name:
+            with DB_LOCK:
+                conn.execute("UPDATE devices SET auto_name=? WHERE mac=?", (name, mac))
+                conn.commit()
+
+
+def resolve_name(ip):
+    """Best-effort hostname for ip: reverse DNS, falling back to a NetBIOS node-status
+    query. Returns a cleaned name (<=63 chars) or None. Never raises."""
+    name = None
+    old_timeout = socket.getdefaulttimeout()
+    try:
+        socket.setdefaulttimeout(1.5)
+        host = socket.gethostbyaddr(ip)[0]
+        label = host.split(".")[0].strip()
+        if label and label != ip:
+            name = label
+    except (OSError, UnicodeError):
+        pass
+    finally:
+        socket.setdefaulttimeout(old_timeout)
+    if not name:
+        try:
+            name = _netbios_query(ip)
+        except Exception:
+            name = None
+    return name[:63] if name else None
+
+
+def _netbios_query(ip):
+    """Send a UDP/137 NBSTAT node-status request and return the first workstation
+    name found in the reply, or None. Best-effort: any socket error yields None."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(1.0)
+            s.sendto(_netbios_query_packet(), (ip, 137))
+            data, _addr = s.recvfrom(1024)
+        return _parse_netbios_response(data)
+    except OSError:
+        return None
+
+
+def _netbios_query_packet():
+    """~50-byte NBSTAT query for the wildcard name '*' (node status request)."""
+    padded = b"*" + b"\x00" * 15
+    encoded = bytes(c for byte in padded for c in (0x41 + (byte >> 4), 0x41 + (byte & 0xF)))
+    header = struct.pack(">HHHHHH", 0x1234, 0x0000, 1, 0, 0, 0)
+    question = bytes([32]) + encoded + b"\x00" + struct.pack(">HH", 0x21, 0x01)
+    return header + question
+
+
+def _parse_netbios_response(data):
+    """Pure parser for an NBSTAT response: return the first non-group (workstation)
+    NetBIOS name in the name table, or None. Format (after the 12-byte header):
+    a name field (either a compression pointer or an encoded label), then
+    type/class/ttl/rdlength (10 bytes), then a 1-byte name count and that many
+    18-byte entries (15-char name + 1 suffix byte + 2 flag bytes; bit 0x8000 of
+    the flags marks a group name)."""
+    try:
+        if data[12] == 0xC0:  # compression pointer back to the question name
+            off = 12 + 2
+        else:  # length-prefixed encoded label, terminated by a 0x00 byte
+            off = 12 + 1 + data[12] + 1
+        off += 2 + 2 + 4 + 2  # type + class + ttl + rdlength
+        num_names = data[off]
+        off += 1
+        for i in range(num_names):
+            entry = data[off + i * 18: off + i * 18 + 18]
+            if len(entry) < 18:
+                break
+            flags = struct.unpack(">H", entry[16:18])[0]
+            if not flags & 0x8000:  # unique name, not a group name
+                name = entry[:15].decode("ascii", "ignore").rstrip(" \x00")
+                if name:
+                    return name
+        return None
+    except (IndexError, struct.error):
+        return None
 
 # ---------------------------------------------------------------- scanner thread
 

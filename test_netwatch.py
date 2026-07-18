@@ -129,6 +129,22 @@ def test_sniffer_loop_without_scapy():
     scanner.sniffer_loop({"passive": False}, t, net, lambda kind, dev: None)
 
 
+def test_netbios_parse():
+    # synthetic NBSTAT response: name field is a compression pointer (0xc0 0x0c) back
+    # to the question, then type/class/ttl/rdlength, then 2 name-table entries:
+    # a group name ("WORKGROUP", group bit 0x8000 set) and a unique workstation
+    # name ("TESTHOST", group bit clear). The parser should skip the group name.
+    resp = (b"\x12\x34\x84\x00\x00\x00\x00\x01\x00\x00\x00\x00"  # header
+            b"\xc0\x0c"                                          # name = pointer
+            b"\x00\x21\x00\x01\x00\x00\x00\x00"                  # type, class, ttl
+            b"\x00\x25"                                          # rdlength
+            b"\x02"                                              # num_names
+            b"WORKGROUP      \x00\x80\x04"                       # group name
+            b"TESTHOST       \x00\x00\x04")                      # workstation name
+    assert scanner._parse_netbios_response(resp) == "TESTHOST"
+    assert scanner._parse_netbios_response(b"garbage") is None
+
+
 def test_password():
     h = hash_password("hunter2")
     assert check_password("hunter2", h)
@@ -141,5 +157,6 @@ if __name__ == "__main__":
     test_tracker()
     test_mark_present()
     test_sniffer_loop_without_scapy()
+    test_netbios_parse()
     test_password()
     print("all checks passed")
