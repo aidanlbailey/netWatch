@@ -98,6 +98,10 @@ function td(text, cls) {
   return el;
 }
 
+function name(d) {
+  return d.nickname || d.auto_name || d.vendor || d.mac;
+}
+
 function editNickname(cell, dev) {
   const input = document.createElement("input");
   input.value = dev.nickname || "";
@@ -136,9 +140,17 @@ async function refresh() {
   tbody.replaceChildren(...data.devices.map(d => {
     const tr = document.createElement("tr");
     tr.className = d.online ? "online" : "offline";
-    const nickCell = td(d.nickname || "add name", "nick");
-    nickCell.title = "Click to rename";
+    const nickCell = td(d.nickname || d.auto_name || "add name", "nick");
+    nickCell.title = "click to rename, right-click to reset";
     nickCell.onclick = () => editNickname(nickCell, d);
+    nickCell.oncontextmenu = (e) => {
+      e.preventDefault();
+      fetch("/api/nickname", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mac: d.mac, nickname: "" }),
+      }).then(refresh);
+    };
     const chk = document.createElement("input");
     chk.type = "checkbox";
     chk.checked = !!d.notify;
@@ -158,7 +170,7 @@ async function refresh() {
 
   document.getElementById("events").replaceChildren(...data.events.map(e => {
     const li = document.createElement("li");
-    li.textContent = `${e.kind === "join" ? "Joined" : "Left"}: ${e.nickname || e.vendor || e.mac} — ${ago(e.ts)}`;
+    li.textContent = `${e.kind === "join" ? "Joined" : "Left"}: ${name(e)} — ${ago(e.ts)}`;
     return li;
   }));
 }

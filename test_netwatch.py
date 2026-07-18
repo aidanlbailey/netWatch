@@ -3,7 +3,8 @@ Run: python test_netwatch.py
 """
 import sqlite3
 
-import netwatch
+import scanner
+from common import check_password, hash_password
 
 LINUX_IP_NEIGH = """192.168.1.1 dev eth0 lladdr a4:2b:b0:11:22:33 REACHABLE
 192.168.1.42 dev eth0 lladdr f0:2f:4b:aa:bb:cc DELAY
@@ -27,17 +28,17 @@ def filtered(pairs):
 
 def test_parse():
     # stale entries (departed devices) must be excluded; in-flight verification kept
-    assert filtered(netwatch.parse_arp(LINUX_IP_NEIGH,
-                                       require=("REACHABLE", "DELAY", "PROBE"))) == EXPECTED
-    assert filtered(netwatch.parse_arp(LINUX_PROC_ARP)) == EXPECTED
-    assert netwatch.normalize_mac("F0-2F-4B-AA-BB-CC") == "f0:2f:4b:aa:bb:cc"
+    assert filtered(scanner.parse_arp(LINUX_IP_NEIGH,
+                                      require=("REACHABLE", "DELAY", "PROBE"))) == EXPECTED
+    assert filtered(scanner.parse_arp(LINUX_PROC_ARP)) == EXPECTED
+    assert scanner.normalize_mac("F0-2F-4B-AA-BB-CC") == "f0:2f:4b:aa:bb:cc"
 
 
 def test_tracker():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    conn.executescript(netwatch.SCHEMA)
-    t = netwatch.Tracker(conn, offline_after_misses=3)
+    conn.executescript(scanner.SCHEMA)
+    t = scanner.Tracker(conn, offline_after_misses=3)
     phone, tv = "aa:aa:aa:00:00:01", "bb:bb:bb:00:00:02"
 
     # both appear -> two new-device joins
@@ -76,10 +77,10 @@ def test_tracker():
 
 
 def test_password():
-    h = netwatch.hash_password("hunter2")
-    assert netwatch.check_password("hunter2", h)
-    assert not netwatch.check_password("hunter3", h)
-    assert not netwatch.check_password("x", "garbage")
+    h = hash_password("hunter2")
+    assert check_password("hunter2", h)
+    assert not check_password("hunter3", h)
+    assert not check_password("x", "garbage")
 
 
 if __name__ == "__main__":
