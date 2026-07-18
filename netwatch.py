@@ -87,7 +87,7 @@ def main():
         setup_logging()
         check_config(cfg)
         dev = {"mac": "aa:bb:cc:dd:ee:ff", "ip": "192.0.2.1", "nickname": "test device", "vendor": None}
-        results = notify(cfg, "join", dev)
+        results = notify(cfg, "join", dev, force=True)
         if not results:
             print("No channels configured (set discord.webhook_url or smtp.host).")
         for channel, err in results:

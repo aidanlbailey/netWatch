@@ -43,9 +43,13 @@ def should_notify(cfg, kind, dev, now_dt):
     return True
 
 
-def notify(cfg, kind, dev):
-    """Send to each configured channel. Returns [(channel, error_or_None), ...]."""
-    if not should_notify(cfg, kind, dev, datetime.now()):
+def notify(cfg, kind, dev, force=False):
+    """Send to each configured channel. Returns [(channel, error_or_None), ...].
+
+    force=True bypasses the mode/quiet-hours gate — used by the Test button so it
+    always fires and its empty result unambiguously means "no channels configured".
+    """
+    if not force and not should_notify(cfg, kind, dev, datetime.now()):
         return []
     # ponytail: fire-and-forget per channel; add one retry if webhooks ever flake
     tag = "New device" if dev.get("new") else kind.capitalize()

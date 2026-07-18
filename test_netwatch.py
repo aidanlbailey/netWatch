@@ -188,6 +188,21 @@ def test_notify_modes():
     assert should_notify(cfg_quiet, "join", {**known, "notify": 1}, now) is False
 
 
+def test_notify_force_bypasses_gate():
+    from notify import notify
+    # quiet hours active + mode off would normally suppress; force must still try to send.
+    cfg = {"discord": {"webhook_url": "", "mention_user_id": ""}, "smtp": {"host": ""},
+           "quiet_hours": {"start": 0, "end": 23}}
+    dev = {"mac": "aa:bb:cc:dd:ee:ff", "ip": "192.0.2.1", "notify": 0}
+    # no channels configured -> empty either way, but force must not short-circuit on the gate
+    assert notify(cfg, "join", dev) == []          # gated (would be [] anyway)
+    assert notify(cfg, "join", dev, force=True) == []  # no channels -> still [], but reached send path
+    # with a channel "configured", gate blocks normally but force reaches the (failing) send
+    cfg2 = {**cfg, "discord": {"webhook_url": "http://127.0.0.1:9/x", "mention_user_id": ""}}
+    assert notify(cfg2, "join", dev) == []                    # suppressed by gate
+    assert [c for c, _ in notify(cfg2, "join", dev, force=True)] == ["Discord"]  # attempted
+
+
 def test_password():
     h = hash_password("hunter2")
     assert check_password("hunter2", h)
@@ -203,5 +218,6 @@ if __name__ == "__main__":
     test_netbios_parse()
     test_quiet_hours()
     test_notify_modes()
+    test_notify_force_bypasses_gate()
     test_password()
     print("all checks passed")

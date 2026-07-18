@@ -456,10 +456,11 @@ def sniffer_loop(cfg, tracker, net, notify_cb):
             log.exception("passive sniffer: bad packet")
 
     try:
-        AsyncSniffer(filter="arp or (udp and (port 67 or 68))", prn=handler, store=False).start()
+        sniffer = AsyncSniffer(filter="arp or (udp and (port 67 or 68))", prn=handler, store=False)
+        sniffer.start()
     except Exception as e:
         warn("passive sniffing unavailable (scapy/Npcap missing or no permission): %s", e)
         return
 
     log.info("passive sniffer active (ARP/DHCP)")
-    threading.Event().wait()  # AsyncSniffer runs in its own thread; keep this daemon alive
+    sniffer.join()  # AsyncSniffer runs in its own thread; keep this daemon alive on it

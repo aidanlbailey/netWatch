@@ -75,7 +75,7 @@ def create_app(cfg, conn, tracker):
         if not request.is_json:
             return jsonify(error="json required"), 400
         results = notify(cfg, "join", {"mac": "aa:bb:cc:dd:ee:ff", "ip": "192.0.2.1",
-                                       "nickname": "test device", "vendor": None})
+                                       "nickname": "test device", "vendor": None}, force=True)
         return jsonify(results=[{"channel": c, "error": e} for c, e in results])
 
     @app.get("/api/devices")
