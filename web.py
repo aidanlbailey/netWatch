@@ -124,10 +124,13 @@ def create_app(cfg, conn, tracker):
         if not request.is_json:
             return jsonify(error="json required"), 400
         body = request.get_json()
-        try:
-            misses = max(1, min(120, int(body.get("offline_after_misses"))))
-        except (TypeError, ValueError):
-            return jsonify(error="offline_after_misses must be an integer"), 400
+        if "offline_after_misses" in body:  # slider and quiet-hours POST independently
+            try:
+                misses = max(1, min(120, int(body["offline_after_misses"])))
+            except (TypeError, ValueError):
+                return jsonify(error="offline_after_misses must be an integer"), 400
+        else:
+            misses = tracker.offline_after
 
         def hour(v):
             if v is None:
