@@ -1,5 +1,8 @@
 """Flask dashboard: login + /api/* routes."""
 import logging
+import os
+import sys
+import threading
 import time
 
 import scanner
@@ -95,7 +98,7 @@ def create_app(cfg, conn, tracker):
                        offline_after_misses=tracker.offline_after,
                        scan_interval_sec=cfg["scan_interval_sec"], summary=summary,
                        quiet_hours=cfg.get("quiet_hours", {"start": None, "end": None}),
-                       sniffer_status=scanner.sniffer_status)
+                       sniffer_status=scanner.detection_status())
 
     @app.get("/api/history/<mac>")
     def api_history(mac):
@@ -205,6 +208,31 @@ def create_app(cfg, conn, tracker):
         # subnet/passive/bind changes only fully apply on restart; note that to the UI
         return jsonify(ok=True, restart_needed="passive" in b or "subnet" in b)
 
+    @app.post("/api/service")
+    def api_service():
+        if not authed():
+            return jsonify(error="unauthorized"), 401
+        if not request.is_json:
+            return jsonify(error="json required"), 400
+        action = request.get_json().get("action")
+        if action not in ("restart", "stop"):
+            return jsonify(error="action must be 'restart' or 'stop'"), 400
+
+        def act():
+            time.sleep(0.5)  # let the HTTP response flush first
+            if action == "restart":
+                log.info("restart requested from dashboard")
+                # re-exec in place: same PID, so the Scheduled Task / systemd wrapper
+                # keeps supervising; picks up code + config changes. If it fails, the
+                # original process keeps serving (execv only returns on error).
+                os.execv(sys.executable, [sys.executable, str(BASE / "netwatch.py")])
+            else:
+                log.info("stop requested from dashboard")
+                os._exit(0)  # clean exit; won't be auto-restarted until next logon/boot
+
+        threading.Thread(target=act, daemon=True).start()
+        return jsonify(ok=True, action=action)
+
     @app.post("/api/notify")
     def api_notify():
         if not authed():
@@ -212,9 +240,7 @@ def create_app(cfg, conn, tracker):
         if not request.is_json:
             return jsonify(error="json required"), 400
         body = request.get_json()
-        val = body.get("notify")
-        if val not in (0, 1, 2):
-            return jsonify(error="notify must be 0, 1, or 2"), 400
+        val = 1 if body.get("notify") else 0
         with DB_LOCK:
             if body.get("mac") == "*":
                 conn.execute("UPDATE devices SET notify=?", (val,))

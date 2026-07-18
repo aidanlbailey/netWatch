@@ -12,16 +12,17 @@ No admin rights or capture drivers needed.
 
 ## Features
 
-- **Auto-naming** — devices label themselves via reverse-DNS and NetBIOS (and
+- **Auto-naming**: devices label themselves via reverse-DNS and NetBIOS (and
   DHCP hostnames when the sniffer is on), so you see "living-room-tv" instead of
   a MAC. Override any name with a nickname (right-click a nickname to reset it).
-- **Notifications** — Discord webhook and/or SMTP email on join/leave, with a
-  Test button. Per-device modes (off / all events / new-device-only) and global
-  quiet hours.
-- **Dashboard** — who's-home summary, device table, per-device presence timeline
-  (click a device's status), adjustable offline grace period, and a Settings
-  panel to edit config (subnet, notifications, detection) without leaving the page.
-- **Optional instant detection** — install scapy (plus Npcap on Windows) to add
+- **Notifications**: Discord webhook and/or SMTP email on join/leave, with a
+  Test button, a per-device on/off toggle, and global quiet hours. New devices
+  notify by default.
+- **Dashboard**: who's-home summary, device table, per-device presence timeline
+  (click a device's status), adjustable offline grace period, service
+  stop/restart, and a Settings panel to edit config (subnet, notifications,
+  detection) without leaving the page.
+- **Optional instant detection**: install scapy (plus Npcap on Windows) to add
   passive ARP/DHCP sniffing for ~1-3 s join detection. The dashboard shows
   whether it's active and how to enable it. Without it, the active sweep covers
   everything; nothing else changes.
@@ -49,8 +50,6 @@ service state and handles start, stop, uninstall, logs, and config editing:
 "Config (assistive)" reopens the guided form, "Config (manual)" opens
 config.json in your editor. Rerun the wizard any time.
 
-Both the wizard and the dashboard have a Help button that opens these docs.
-
 - Windows: installs a Scheduled Task running at logon. Logs: `netwatch.log`.
 - Linux: installs a systemd user unit, no sudo, starts at boot via lingering.
   Logs: `journalctl --user -u netwatch`.
@@ -67,19 +66,24 @@ your phone.
 
 ### Email
 
-Fill in the `smtp` block in config.json. For Gmail: `smtp.gmail.com`, port 587,
-and an [app password](https://myaccount.google.com/apppasswords).
+Fill in the `smtp` block (from the dashboard Settings panel or config.json). For
+Gmail: `smtp.gmail.com`, port 587, and an
+[app password](https://myaccount.google.com/apppasswords).
 
 An empty `webhook_url` or `host` disables that channel. Test with the
 dashboard's "Test notification" button or `python netwatch.py test-notify`.
 
-## Service control without the wizard
+## Controlling the service
+
+The dashboard has Stop and Restart buttons. Start is not on the dashboard,
+because a stopped service has nothing to serve it; start it from the install
+wizard or the service manager:
 
 ```
-schtasks /End /TN netWatch                # Windows
-schtasks /Run /TN netWatch
-systemctl --user stop netwatch            # Linux
-systemctl --user start netwatch
+schtasks /Run /TN netWatch                # Windows start
+schtasks /End /TN netWatch                # Windows stop
+systemctl --user start netwatch           # Linux start
+systemctl --user stop netwatch            # Linux stop
 ```
 
 `python netwatch.py` runs in the foreground instead, and
@@ -95,16 +99,17 @@ systemctl --user start netwatch
 
 ## Config
 
-Edits to config.json apply within one sweep. Changes to `bind_host`,
-`bind_port`, or the password need a restart.
+Edit config from the dashboard Settings panel or by hand in config.json. Most
+edits apply within one sweep; changes to `bind_host`, `bind_port`, `passive`,
+`subnet`, or the password need a restart.
 
 | key | meaning |
 |---|---|
 | `subnet` | `null` auto-detects the local /24. Pin it (e.g. `"192.168.1.0/24"`) if you use a VPN, otherwise the VPN's subnet gets scanned. |
-| `scan_interval_sec` | sweep frequency |
+| `scan_interval_sec` | sweep frequency in seconds |
 | `offline_after_misses` | missed sweeps before a leave fires. Adjustable with the dashboard slider. Default 25 (~5 min). Lower it if you only track always-on devices. |
 | `passive` | `"auto"` uses the scapy sniffer if available, else the sweep only. `true` forces it (warns if unavailable), `false` disables it. |
-| `quiet_hours` | `{"start": null, "end": null}` = off. Set hours (0-23, wraps past midnight) to suppress all notifications during that window. Editable from the dashboard. |
+| `quiet_hours` | `{"start": null, "end": null}` = off. Hours are on the 24-hour clock, 0 to 23, local time, and wrap past midnight (e.g. start 22, end 7 means 10pm to 7am). Suppresses all notifications in that window. Editable from the dashboard. |
 | `bind_host` / `bind_port` | dashboard listen address |
 | `db_path` | SQLite file, relative to the script |
 

@@ -30,17 +30,10 @@ def in_quiet_hours(quiet, now_dt):
 
 
 def should_notify(cfg, kind, dev, now_dt):
-    """Gate: per-device mode (0=off, 1=all, 2=new-only) + global quiet hours."""
+    """Gate: per-device on/off (notify 0 = off) + global quiet hours."""
     if in_quiet_hours(cfg.get("quiet_hours"), now_dt):
         return False
-    mode = dev.get("notify")
-    if mode is None:
-        mode = 1
-    if mode == 0:
-        return False
-    if mode == 2:
-        return bool(dev.get("new"))
-    return True
+    return dev.get("notify", 1) != 0  # 0 = off; anything else = on
 
 
 def notify(cfg, kind, dev, force=False):

@@ -35,6 +35,8 @@
   <h1>netWatch</h1>
   <div>
     <button id="testNotify" title="Send a test ping through the configured channels">Test notification</button>
+    <button onclick="serviceAction('restart')" title="Restart the netWatch service (applies config changes)">Restart</button>
+    <button onclick="serviceAction('stop')" title="Stop the netWatch service">Stop</button>
     <button onclick="window.open('https://github.com/aidanlbailey/netWatch#readme')">Help</button>
     <form method="post" action="/logout" style="display:inline"><button>Log out</button></form>
   </div>
@@ -44,11 +46,10 @@
   <input type="range" id="misses" min="1" max="50" step="1">
   <span id="missesLabel"></span>
 </p>
-<p title="Suppress all notifications between these hours (local time, 24h). Leave blank to disable.">
-  Quiet hours
-  <input type="number" id="quietStart" min="0" max="23" placeholder="start">
-  &ndash;
-  <input type="number" id="quietEnd" min="0" max="23" placeholder="end">
+<p title="Suppress all notifications between these hours. Local time. Leave blank to disable.">
+  Quiet hours <input type="number" id="quietStart" min="0" max="23" placeholder="start">
+  &ndash; <input type="number" id="quietEnd" min="0" max="23" placeholder="end">
+  <small>24-hour clock, 0&ndash;23 (e.g. 22 to 7 = 10pm&ndash;7am). Local time.</small>
 </p>
 <p id="detection"></p>
 
@@ -102,6 +103,22 @@ function missesText(v) {
 }
 
 let lastDevices = [];
+
+async function serviceAction(action) {
+  const msg = action === "stop"
+    ? "Stop netWatch? The dashboard goes offline until you start it again from the install wizard or your service manager."
+    : "Restart netWatch? The dashboard will reconnect in a few seconds.";
+  if (!confirm(msg)) return;
+  await fetch("/api/service", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  document.body.innerHTML = "<p style='font-family:system-ui;margin:2rem'>" + (action === "restart"
+    ? "Restarting… reconnecting shortly."
+    : "netWatch stopped. Start it again from the install wizard (installer.py) or your service manager.") + "</p>";
+  if (action === "restart") setTimeout(() => location.reload(), 6000);
+}
+
 document.getElementById("testNotify").onclick = async () => {
   const res = await fetch("/api/test-notify", {
     method: "POST",
@@ -115,11 +132,11 @@ document.getElementById("testNotify").onclick = async () => {
 };
 
 document.getElementById("notifyAll").onclick = async () => {
-  const allOn = lastDevices.every(d => d.notify === 1);
+  const allOn = lastDevices.every(d => d.notify);
   await fetch("/api/notify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mac: "*", notify: allOn ? 0 : 1 }),
+    body: JSON.stringify({ mac: "*", notify: !allOn }),
   });
   refresh();
 };
@@ -143,8 +160,9 @@ function quietVal(el) { return el.value === "" ? null : Number(el.value); }
 
 const DETECTION = {
   active: ["Enhanced detection: on (instant joins via passive sniffing)", "det-on"],
-  disabled: ["Enhanced detection: off — turn it on in Settings below", "det-off"],
-  unavailable: ["Enhanced detection: unavailable — run  pip install scapy  (plus Npcap on Windows), then restart the service", "det-bad"],
+  disabled: ["Enhanced detection: off (turn it on in Settings below, then restart)", "det-off"],
+  stopped: ["Enhanced detection: stopped (the sniffer exited; restart the service)", "det-bad"],
+  unavailable: ["Enhanced detection: unavailable. Run  pip install scapy  (plus Npcap on Windows), then restart the service", "det-bad"],
 };
 function renderDetection(status) {
   const el = document.getElementById("detection");
@@ -322,17 +340,17 @@ async function refresh() {
         body: JSON.stringify({ mac: d.mac, nickname: "" }),
       }).then(refresh);
     };
-    const sel = document.createElement("select");
-    sel.innerHTML = '<option value="0">Off</option><option value="1">All</option><option value="2">New-only</option>';
-    sel.value = d.notify;
-    sel.title = "Notify mode";
-    sel.onchange = () => fetch("/api/notify", {
+    const chk = document.createElement("input");
+    chk.type = "checkbox";
+    chk.checked = !!d.notify;
+    chk.title = "Notify on join/leave";
+    chk.onchange = () => fetch("/api/notify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mac: d.mac, notify: Number(sel.value) }),
+      body: JSON.stringify({ mac: d.mac, notify: chk.checked }),
     });
     const chkCell = document.createElement("td");
-    chkCell.append(sel);
+    chkCell.append(chk);
     tr.append(statusCell, nickCell, td(d.ip), td(d.mac),
               td(d.vendor || ""), td(ago(d.first_seen)),
               td(d.online ? "—" : ago(d.last_seen)), chkCell);

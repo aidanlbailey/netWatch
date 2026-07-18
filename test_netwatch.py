@@ -165,27 +165,21 @@ def test_quiet_hours():
 def test_notify_modes():
     cfg = {"discord": {"webhook_url": ""}, "smtp": {"host": ""}}
     now = datetime(2026, 1, 1, 12)
-    known = {"mac": "aa:aa:aa:00:00:01", "new": False}
-    new_dev = {"mac": "aa:aa:aa:00:00:01", "new": True}
+    dev = {"mac": "aa:aa:aa:00:00:01", "new": False}
 
-    assert should_notify(cfg, "join", {**known, "notify": 0}, now) is False
-    assert should_notify(cfg, "leave", {**known, "notify": 0}, now) is False
+    # notify 0 = off, anything else = on, for both join and leave
+    assert should_notify(cfg, "join", {**dev, "notify": 0}, now) is False
+    assert should_notify(cfg, "leave", {**dev, "notify": 0}, now) is False
+    assert should_notify(cfg, "join", {**dev, "notify": 1}, now) is True
+    assert should_notify(cfg, "leave", {**dev, "notify": 1}, now) is True
 
-    assert should_notify(cfg, "join", {**known, "notify": 1}, now) is True
-    assert should_notify(cfg, "leave", {**known, "notify": 1}, now) is True
+    # missing/None notify defaults to on
+    assert should_notify(cfg, "join", dev, now) is True
+    assert should_notify(cfg, "join", {**dev, "notify": None}, now) is True
 
-    assert should_notify(cfg, "join", {**known, "notify": 2}, now) is False
-    assert should_notify(cfg, "join", {**new_dev, "notify": 2}, now) is True
-    assert should_notify(cfg, "leave", {**known, "notify": 2}, now) is False
-
-    # missing/None notify defaults to "all"
-    assert should_notify(cfg, "join", known, now) is True
-    assert should_notify(cfg, "join", {**known, "notify": None}, now) is True
-
-    # quiet hours suppress everything regardless of mode
+    # quiet hours suppress regardless of the on/off flag
     cfg_quiet = {**cfg, "quiet_hours": {"start": 10, "end": 14}}
-    assert should_notify(cfg_quiet, "join", {**new_dev, "notify": 2}, now) is False
-    assert should_notify(cfg_quiet, "join", {**known, "notify": 1}, now) is False
+    assert should_notify(cfg_quiet, "join", {**dev, "notify": 1}, now) is False
 
 
 def test_notify_force_bypasses_gate():
