@@ -125,6 +125,19 @@ netWatch picks it up automatically (`passive: "auto"`). It passively watches
 ARP/DHCP to catch devices the instant they announce themselves; the active
 sweep still runs for leave detection. Without scapy, nothing changes.
 
+On Linux the sniffer needs raw-socket access, which the unprivileged systemd
+user service lacks by default (you'll see "passive sniffing unavailable ... no
+permission" in the logs). Grant the capability to the interpreter the service
+runs, then restart:
+
+```
+sudo setcap cap_net_raw,cap_net_admin+eip "$(readlink -f "$(which python3)")"
+systemctl --user restart netwatch
+```
+
+This lets that Python open raw sockets without running the whole service as
+root. On Windows, installing Npcap grants the equivalent access.
+
 ## Limits
 
 Single IPv4 /24. No VLANs, IPv6, or HTTPS. One shared password.
