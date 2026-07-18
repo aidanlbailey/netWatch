@@ -311,7 +311,7 @@ async function refresh() {
     statusCell.style.cursor = "pointer";
     statusCell.title = "Click for join/leave history";
     statusCell.onclick = () => toggleHistory(d.mac);
-    const nickCell = td(d.nickname || d.auto_name || "add name", "nick");
+    const nickCell = td(d.nickname || d.auto_name || "—", "nick");
     nickCell.title = "click to rename, right-click to reset";
     nickCell.onclick = () => editNickname(nickCell, d);
     nickCell.oncontextmenu = (e) => {
