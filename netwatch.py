@@ -8,11 +8,12 @@ import logging
 import secrets
 import sys
 import threading
+import time
 from logging.handlers import RotatingFileHandler
 
 from common import BASE, CONFIG_PATH, IS_WIN, load_config, save_config, hash_password, check_password
 from notify import notify
-from scanner import Tracker, detect_network, open_db, scanner_loop
+from scanner import Tracker, detect_network, open_db, scanner_loop, sniffer_loop
 from web import create_app
 
 __version__ = "1.0.0"
@@ -52,6 +53,18 @@ def run(cfg):
     local_ip, net = detect_network(cfg)
 
     threading.Thread(target=scanner_loop, args=(cfg, tracker, net, local_ip, baseline),
+                     daemon=True).start()
+
+    # Optional passive sniffer for instant (~1-3s) joins; degrades to sweep-only
+    # if scapy/Npcap is unavailable. Shares the sweep's first-minute baseline
+    # suppression so a fresh DB doesn't announce every existing device.
+    sniffer_quiet_until = time.time() + 60 if baseline else 0
+
+    def notify_cb(kind, dev):
+        if time.time() >= sniffer_quiet_until:
+            notify(cfg, kind, dev)
+
+    threading.Thread(target=sniffer_loop, args=(cfg, tracker, net, notify_cb),
                      daemon=True).start()
 
     from waitress import serve
