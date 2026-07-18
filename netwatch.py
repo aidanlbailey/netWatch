@@ -27,6 +27,8 @@ from email.message import EmailMessage
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+__version__ = "1.0.0"
+
 BASE = Path(__file__).resolve().parent
 CONFIG_PATH = BASE / "config.json"
 IS_WIN = os.name == "nt"
