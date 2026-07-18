@@ -34,6 +34,12 @@
   <input type="range" id="misses" min="1" max="50" step="1">
   <span id="missesLabel"></span>
 </p>
+<p title="Suppress all notifications between these hours (local time, 24h). Leave blank to disable.">
+  Quiet hours
+  <input type="number" id="quietStart" min="0" max="23" placeholder="start">
+  &ndash;
+  <input type="number" id="quietEnd" min="0" max="23" placeholder="end">
+</p>
 <h2>Devices</h2>
 <div class="tablewrap"><table>
   <thead><tr><th>Status</th><th>Nickname</th><th>IP</th><th>MAC</th><th>Vendor</th><th>First seen</th><th>Last seen</th><th>Notify<br><button id="notifyAll" title="Select or deselect all devices">all</button></th></tr></thead>
@@ -67,11 +73,11 @@ document.getElementById("testNotify").onclick = async () => {
 };
 
 document.getElementById("notifyAll").onclick = async () => {
-  const allOn = lastDevices.every(d => d.notify);
+  const allOn = lastDevices.every(d => d.notify === 1);
   await fetch("/api/notify", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mac: "*", notify: !allOn }),
+    body: JSON.stringify({ mac: "*", notify: allOn ? 0 : 1 }),
   });
   refresh();
 };
@@ -82,6 +88,16 @@ slider.addEventListener("change", () => fetch("/api/settings", {
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ offline_after_misses: Number(slider.value) }),
 }));
+
+const quietStart = document.getElementById("quietStart");
+const quietEnd = document.getElementById("quietEnd");
+function quietVal(el) { return el.value === "" ? null : Number(el.value); }
+[quietStart, quietEnd].forEach(el => el.addEventListener("change", () => fetch("/api/settings", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ offline_after_misses: Number(slider.value),
+                         quiet_start: quietVal(quietStart), quiet_end: quietVal(quietEnd) }),
+})));
 
 function ago(ts) {
   const s = Math.max(0, serverNow - ts);
@@ -135,6 +151,8 @@ async function refresh() {
     slider.value = data.offline_after_misses;
     missesLabel.textContent = missesText(slider.value);
   }
+  if (document.activeElement !== quietStart) quietStart.value = data.quiet_hours?.start ?? "";
+  if (document.activeElement !== quietEnd) quietEnd.value = data.quiet_hours?.end ?? "";
 
   const tbody = document.getElementById("devices");
   tbody.replaceChildren(...data.devices.map(d => {
@@ -151,17 +169,17 @@ async function refresh() {
         body: JSON.stringify({ mac: d.mac, nickname: "" }),
       }).then(refresh);
     };
-    const chk = document.createElement("input");
-    chk.type = "checkbox";
-    chk.checked = !!d.notify;
-    chk.title = "Notify on join/leave";
-    chk.onchange = () => fetch("/api/notify", {
+    const sel = document.createElement("select");
+    sel.innerHTML = '<option value="0">Off</option><option value="1">All</option><option value="2">New-only</option>';
+    sel.value = d.notify;
+    sel.title = "Notify mode";
+    sel.onchange = () => fetch("/api/notify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mac: d.mac, notify: chk.checked }),
+      body: JSON.stringify({ mac: d.mac, notify: Number(sel.value) }),
     });
     const chkCell = document.createElement("td");
-    chkCell.append(chk);
+    chkCell.append(sel);
     tr.append(td(d.online ? "online" : "offline"), nickCell, td(d.ip), td(d.mac),
               td(d.vendor || ""), td(ago(d.first_seen)),
               td(d.online ? "—" : ago(d.last_seen)), chkCell);

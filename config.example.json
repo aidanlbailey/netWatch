@@ -3,6 +3,7 @@
   "scan_interval_sec": 12,
   "offline_after_misses": 25,
   "passive": "auto",
+  "quiet_hours": { "start": null, "end": null },
   "bind_host": "0.0.0.0",
   "bind_port": 8080,
   "password_hash": "",

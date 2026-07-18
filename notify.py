@@ -4,6 +4,7 @@ import logging
 import smtplib
 import urllib.error
 import urllib.request
+from datetime import datetime
 from email.message import EmailMessage
 
 log = logging.getLogger("netwatch")
@@ -13,8 +14,39 @@ def device_name(dev):
     return dev.get("nickname") or dev.get("auto_name") or dev.get("vendor") or dev["mac"]
 
 
+def in_quiet_hours(quiet, now_dt):
+    """quiet = {"start": 0-23 or None, "end": 0-23 or None}. Handles midnight wrap-around."""
+    if not quiet:
+        return False
+    start, end = quiet.get("start"), quiet.get("end")
+    if start is None or end is None:
+        return False
+    h = now_dt.hour
+    if start == end:
+        return False
+    if start < end:
+        return start <= h < end
+    return h >= start or h < end  # wraps past midnight
+
+
+def should_notify(cfg, kind, dev, now_dt):
+    """Gate: per-device mode (0=off, 1=all, 2=new-only) + global quiet hours."""
+    if in_quiet_hours(cfg.get("quiet_hours"), now_dt):
+        return False
+    mode = dev.get("notify")
+    if mode is None:
+        mode = 1
+    if mode == 0:
+        return False
+    if mode == 2:
+        return bool(dev.get("new"))
+    return True
+
+
 def notify(cfg, kind, dev):
     """Send to each configured channel. Returns [(channel, error_or_None), ...]."""
+    if not should_notify(cfg, kind, dev, datetime.now()):
+        return []
     # ponytail: fire-and-forget per channel; add one retry if webhooks ever flake
     tag = "New device" if dev.get("new") else kind.capitalize()
     msg = f"{tag}: {device_name(dev)} ({dev.get('ip')}, {dev['mac']})"

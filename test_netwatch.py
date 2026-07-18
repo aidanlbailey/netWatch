@@ -3,9 +3,11 @@ Run: python test_netwatch.py
 """
 import sqlite3
 import sys
+from datetime import datetime
 
 import scanner
 from common import check_password, hash_password
+from notify import in_quiet_hours, should_notify
 
 LINUX_IP_NEIGH = """192.168.1.1 dev eth0 lladdr a4:2b:b0:11:22:33 REACHABLE
 192.168.1.42 dev eth0 lladdr f0:2f:4b:aa:bb:cc DELAY
@@ -145,6 +147,47 @@ def test_netbios_parse():
     assert scanner._parse_netbios_response(b"garbage") is None
 
 
+def test_quiet_hours():
+    assert in_quiet_hours(None, datetime(2026, 1, 1, 12)) is False
+    assert in_quiet_hours({"start": None, "end": None}, datetime(2026, 1, 1, 12)) is False
+    # wrap-around window: 22 -> 7
+    wrap = {"start": 22, "end": 7}
+    assert in_quiet_hours(wrap, datetime(2026, 1, 1, 23)) is True
+    assert in_quiet_hours(wrap, datetime(2026, 1, 1, 3)) is True
+    assert in_quiet_hours(wrap, datetime(2026, 1, 1, 12)) is False
+    # non-wrap window: 1 -> 5
+    plain = {"start": 1, "end": 5}
+    assert in_quiet_hours(plain, datetime(2026, 1, 1, 3)) is True
+    assert in_quiet_hours(plain, datetime(2026, 1, 1, 5)) is False
+    assert in_quiet_hours(plain, datetime(2026, 1, 1, 0)) is False
+
+
+def test_notify_modes():
+    cfg = {"discord": {"webhook_url": ""}, "smtp": {"host": ""}}
+    now = datetime(2026, 1, 1, 12)
+    known = {"mac": "aa:aa:aa:00:00:01", "new": False}
+    new_dev = {"mac": "aa:aa:aa:00:00:01", "new": True}
+
+    assert should_notify(cfg, "join", {**known, "notify": 0}, now) is False
+    assert should_notify(cfg, "leave", {**known, "notify": 0}, now) is False
+
+    assert should_notify(cfg, "join", {**known, "notify": 1}, now) is True
+    assert should_notify(cfg, "leave", {**known, "notify": 1}, now) is True
+
+    assert should_notify(cfg, "join", {**known, "notify": 2}, now) is False
+    assert should_notify(cfg, "join", {**new_dev, "notify": 2}, now) is True
+    assert should_notify(cfg, "leave", {**known, "notify": 2}, now) is False
+
+    # missing/None notify defaults to "all"
+    assert should_notify(cfg, "join", known, now) is True
+    assert should_notify(cfg, "join", {**known, "notify": None}, now) is True
+
+    # quiet hours suppress everything regardless of mode
+    cfg_quiet = {**cfg, "quiet_hours": {"start": 10, "end": 14}}
+    assert should_notify(cfg_quiet, "join", {**new_dev, "notify": 2}, now) is False
+    assert should_notify(cfg_quiet, "join", {**known, "notify": 1}, now) is False
+
+
 def test_password():
     h = hash_password("hunter2")
     assert check_password("hunter2", h)
@@ -158,5 +201,7 @@ if __name__ == "__main__":
     test_mark_present()
     test_sniffer_loop_without_scapy()
     test_netbios_parse()
+    test_quiet_hours()
+    test_notify_modes()
     test_password()
     print("all checks passed")

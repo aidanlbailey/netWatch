@@ -90,7 +90,8 @@ def create_app(cfg, conn, tracker):
                 "LEFT JOIN devices d USING(mac) ORDER BY e.id DESC LIMIT 50")]
         return jsonify(devices=devices, events=events, now=int(time.time()),
                        offline_after_misses=tracker.offline_after,
-                       scan_interval_sec=cfg["scan_interval_sec"])
+                       scan_interval_sec=cfg["scan_interval_sec"],
+                       quiet_hours=cfg.get("quiet_hours", {"start": None, "end": None}))
 
     @app.post("/api/nickname")
     def api_nickname():
@@ -111,15 +112,32 @@ def create_app(cfg, conn, tracker):
             return jsonify(error="unauthorized"), 401
         if not request.is_json:
             return jsonify(error="json required"), 400
+        body = request.get_json()
         try:
-            misses = max(1, min(120, int(request.get_json().get("offline_after_misses"))))
+            misses = max(1, min(120, int(body.get("offline_after_misses"))))
         except (TypeError, ValueError):
             return jsonify(error="offline_after_misses must be an integer"), 400
+
+        def hour(v):
+            if v is None:
+                return None
+            v = int(v)
+            if not 0 <= v <= 23:
+                raise ValueError
+            return v
+
+        try:
+            qs = hour(body["quiet_start"]) if "quiet_start" in body else cfg.get("quiet_hours", {}).get("start")
+            qe = hour(body["quiet_end"]) if "quiet_end" in body else cfg.get("quiet_hours", {}).get("end")
+        except (TypeError, ValueError):
+            return jsonify(error="quiet_start/quiet_end must be 0-23 or null"), 400
+
         tracker.offline_after = misses
         cfg["offline_after_misses"] = misses
+        cfg["quiet_hours"] = {"start": qs, "end": qe}
         save_config(cfg)
         log.info("offline_after_misses set to %d via dashboard", misses)
-        return jsonify(ok=True)
+        return jsonify(ok=True, offline_after_misses=misses, quiet_hours=cfg["quiet_hours"])
 
     @app.post("/api/notify")
     def api_notify():
@@ -128,7 +146,9 @@ def create_app(cfg, conn, tracker):
         if not request.is_json:
             return jsonify(error="json required"), 400
         body = request.get_json()
-        val = 1 if body.get("notify") else 0
+        val = body.get("notify")
+        if val not in (0, 1, 2):
+            return jsonify(error="notify must be 0, 1, or 2"), 400
         with DB_LOCK:
             if body.get("mac") == "*":
                 conn.execute("UPDATE devices SET notify=?", (val,))
