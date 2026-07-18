@@ -16,7 +16,7 @@ from notify import notify
 from scanner import Tracker, detect_network, open_db, scanner_loop, sniffer_loop
 from web import create_app
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 
 log = logging.getLogger("netwatch")
 

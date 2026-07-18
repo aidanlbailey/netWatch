@@ -41,11 +41,11 @@ def create_app(cfg, conn, tracker):
             resp.headers["Cache-Control"] = "no-store"
         return resp
 
-    @app.get("/login")
+    @app.route("/login")  # ponytail: .route not .get/.post — works on Flask 1.x (apt) too
     def login_form():
         return LOGIN_HTML.format(err="")
 
-    @app.post("/login")
+    @app.route("/login", methods=["POST"])
     def login():
         ip = request.remote_addr
         count, locked_until = fails.get(ip, [0, 0])
@@ -61,18 +61,18 @@ def create_app(cfg, conn, tracker):
         log.warning("failed login from %s (%d)", ip, count)
         return LOGIN_HTML.format(err="wrong password"), 401
 
-    @app.post("/logout")
+    @app.route("/logout", methods=["POST"])
     def logout():
         session.clear()
         return redirect("/login")
 
-    @app.get("/")
+    @app.route("/")
     def index():
         if not authed():
             return redirect("/login")
         return send_file(BASE / "dashboard.html")
 
-    @app.post("/api/test-notify")
+    @app.route("/api/test-notify", methods=["POST"])
     def api_test_notify():
         if not authed():
             return jsonify(error="unauthorized"), 401
@@ -82,7 +82,7 @@ def create_app(cfg, conn, tracker):
                                        "nickname": "test device", "vendor": None}, force=True)
         return jsonify(results=[{"channel": c, "error": e} for c, e in results])
 
-    @app.get("/api/devices")
+    @app.route("/api/devices")
     def api_devices():
         if not authed():
             return jsonify(error="unauthorized"), 401
@@ -100,7 +100,7 @@ def create_app(cfg, conn, tracker):
                        quiet_hours=cfg.get("quiet_hours", {"start": None, "end": None}),
                        sniffer_status=scanner.detection_status())
 
-    @app.get("/api/history/<mac>")
+    @app.route("/api/history/<mac>")
     def api_history(mac):
         if not authed():
             return jsonify(error="unauthorized"), 401
@@ -109,7 +109,7 @@ def create_app(cfg, conn, tracker):
                 "SELECT kind, ts FROM events WHERE mac=? ORDER BY id DESC LIMIT 100", (mac,))]
         return jsonify(rows)
 
-    @app.post("/api/nickname")
+    @app.route("/api/nickname", methods=["POST"])
     def api_nickname():
         if not authed():
             return jsonify(error="unauthorized"), 401
@@ -122,7 +122,7 @@ def create_app(cfg, conn, tracker):
             conn.commit()
         return jsonify(ok=True)
 
-    @app.post("/api/settings")
+    @app.route("/api/settings", methods=["POST"])
     def api_settings():
         if not authed():
             return jsonify(error="unauthorized"), 401
@@ -158,7 +158,7 @@ def create_app(cfg, conn, tracker):
         log.info("offline_after_misses set to %d via dashboard", misses)
         return jsonify(ok=True, offline_after_misses=misses, quiet_hours=cfg["quiet_hours"])
 
-    @app.get("/api/config")
+    @app.route("/api/config")
     def api_config_get():
         if not authed():
             return jsonify(error="unauthorized"), 401
@@ -171,7 +171,7 @@ def create_app(cfg, conn, tracker):
                   "from_addr": s.get("from_addr", ""), "to_addr": s.get("to_addr", ""),
                   "password_set": bool(s.get("password"))})
 
-    @app.post("/api/config")
+    @app.route("/api/config", methods=["POST"])
     def api_config_post():
         if not authed():
             return jsonify(error="unauthorized"), 401
@@ -208,7 +208,7 @@ def create_app(cfg, conn, tracker):
         # subnet/passive/bind changes only fully apply on restart; note that to the UI
         return jsonify(ok=True, restart_needed="passive" in b or "subnet" in b)
 
-    @app.post("/api/service")
+    @app.route("/api/service", methods=["POST"])
     def api_service():
         if not authed():
             return jsonify(error="unauthorized"), 401
@@ -233,7 +233,7 @@ def create_app(cfg, conn, tracker):
         threading.Thread(target=act, daemon=True).start()
         return jsonify(ok=True, action=action)
 
-    @app.post("/api/notify")
+    @app.route("/api/notify", methods=["POST"])
     def api_notify():
         if not authed():
             return jsonify(error="unauthorized"), 401
