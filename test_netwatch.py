@@ -2,6 +2,7 @@
 Run: python test_netwatch.py
 """
 import sqlite3
+import sys
 
 import scanner
 from common import check_password, hash_password
@@ -76,6 +77,58 @@ def test_tracker():
     assert [(k, d["mac"], d["notify"]) for k, d in events] == [("leave", tv, 0)]
 
 
+def test_mark_present():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(scanner.SCHEMA)
+    t = scanner.Tracker(conn, offline_after_misses=3)
+    phone = "cc:cc:cc:00:00:03"
+
+    # first sighting of a new mac -> new-device join
+    events = t.mark_present(phone, "192.168.1.5", now=1000)
+    assert [(k, d["new"]) for k, d in events] == [("join", True)]
+
+    # still online -> no event, just refreshed
+    assert t.mark_present(phone, "192.168.1.5", now=1006) == []
+    row = conn.execute("SELECT * FROM devices WHERE mac=?", (phone,)).fetchone()
+    assert row["online"] == 1 and row["last_seen"] == 1006
+
+    # the leave path (via process) still works after using mark_present directly
+    assert t.process({}, now=1018) == []
+    assert t.process({}, now=1030) == []
+    events = t.process({}, now=1042)
+    assert [(k, d["mac"]) for k, d in events] == [("leave", phone)]
+
+    # comes back -> rejoin, not "new"
+    events = t.mark_present(phone, "192.168.1.5", now=1054)
+    assert [(k, d["new"]) for k, d in events] == [("join", False)]
+
+
+def test_sniffer_loop_without_scapy():
+    # sniffer_loop must degrade silently (log and return) rather than raise or block
+    # when scapy is missing -- force that regardless of whether it happens to be
+    # installed in this environment (sys.modules[name] = None makes `import` raise
+    # ImportError, same as if the package were absent).
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(scanner.SCHEMA)
+    t = scanner.Tracker(conn, offline_after_misses=3)
+    net = __import__("ipaddress").ip_network("192.168.1.0/24")
+
+    saved = {m: sys.modules.get(m) for m in list(sys.modules) if m == "scapy" or m.startswith("scapy.")}
+    for m in saved:
+        del sys.modules[m]
+    sys.modules["scapy"] = None
+    try:
+        scanner.sniffer_loop({"passive": "auto"}, t, net, lambda kind, dev: None)
+    finally:
+        del sys.modules["scapy"]
+        sys.modules.update(saved)
+
+    # passive=False must short-circuit before ever touching scapy
+    scanner.sniffer_loop({"passive": False}, t, net, lambda kind, dev: None)
+
+
 def test_password():
     h = hash_password("hunter2")
     assert check_password("hunter2", h)
@@ -86,5 +139,7 @@ def test_password():
 if __name__ == "__main__":
     test_parse()
     test_tracker()
+    test_mark_present()
+    test_sniffer_loop_without_scapy()
     test_password()
     print("all checks passed")

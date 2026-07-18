@@ -175,40 +175,61 @@ class Tracker:
         self.offline_after = offline_after_misses
         self.misses = {}  # mac -> consecutive sweeps unseen while online
 
-    def process(self, seen, now):
-        """Apply one sweep result. Returns [(kind, device_dict), ...] to notify."""
+    def mark_present(self, mac, ip, now):
+        """Handle one observed device: insert-if-new, mark-online-if-was-offline, or
+        just refresh ip/last_seen. Returns [(kind, device_dict), ...] (0 or 1 "join"
+        events), same shape as process(). Resets self.misses for mac.
+
+        DB access + misses mutation are locked so this is safe to call concurrently
+        with process() (e.g. from a passive sniffer thread alongside the sweep loop).
+        """
         events = []
         with DB_LOCK:
-            known = {r["mac"]: dict(r) for r in self.conn.execute("SELECT * FROM devices")}
-            for mac, ip in seen.items():
-                self.misses.pop(mac, None)
-                row = known.get(mac)
-                if row is None:
-                    self.conn.execute(
-                        "INSERT INTO devices (mac, ip, first_seen, last_seen, online) VALUES (?,?,?,?,1)",
-                        (mac, ip, now, now))
-                    events.append(("join", {"mac": mac, "ip": ip, "nickname": None,
-                                            "vendor": None, "new": True}))
-                elif not row["online"]:
-                    self.conn.execute(
-                        "UPDATE devices SET ip=?, last_seen=?, online=1 WHERE mac=?", (ip, now, mac))
-                    events.append(("join", row | {"ip": ip, "new": False}))
-                else:
-                    self.conn.execute(
-                        "UPDATE devices SET ip=?, last_seen=? WHERE mac=?", (ip, now, mac))
-            for mac, row in known.items():
-                if row["online"] and mac not in seen:
-                    n = self.misses.get(mac, 0) + 1
-                    if n >= self.offline_after:
-                        self.misses.pop(mac, None)
-                        self.conn.execute("UPDATE devices SET online=0 WHERE mac=?", (mac,))
-                        events.append(("leave", row))
-                    else:
-                        self.misses[mac] = n
+            self.misses.pop(mac, None)
+            r = self.conn.execute("SELECT * FROM devices WHERE mac=?", (mac,)).fetchone()
+            row = dict(r) if r else None
+            if row is None:
+                self.conn.execute(
+                    "INSERT INTO devices (mac, ip, first_seen, last_seen, online) VALUES (?,?,?,?,1)",
+                    (mac, ip, now, now))
+                events.append(("join", {"mac": mac, "ip": ip, "nickname": None,
+                                        "vendor": None, "new": True}))
+            elif not row["online"]:
+                self.conn.execute(
+                    "UPDATE devices SET ip=?, last_seen=?, online=1 WHERE mac=?", (ip, now, mac))
+                events.append(("join", row | {"ip": ip, "new": False}))
+            else:
+                self.conn.execute(
+                    "UPDATE devices SET ip=?, last_seen=? WHERE mac=?", (ip, now, mac))
             for kind, dev in events:
                 self.conn.execute("INSERT INTO events (mac, kind, ts) VALUES (?,?,?)",
                                   (dev["mac"], kind, now))
             self.conn.commit()
+        return events
+
+    def process(self, seen, now):
+        """Apply one sweep result. Returns [(kind, device_dict), ...] to notify."""
+        events = []
+        for mac, ip in seen.items():
+            events.extend(self.mark_present(mac, ip, now))
+        with DB_LOCK:
+            online = {r["mac"]: dict(r) for r in self.conn.execute("SELECT * FROM devices WHERE online=1")}
+            leaves = []
+            for mac, row in online.items():
+                if mac in seen:
+                    continue
+                n = self.misses.get(mac, 0) + 1
+                if n >= self.offline_after:
+                    self.misses.pop(mac, None)
+                    self.conn.execute("UPDATE devices SET online=0 WHERE mac=?", (mac,))
+                    leaves.append(("leave", row))
+                else:
+                    self.misses[mac] = n
+            for kind, dev in leaves:
+                self.conn.execute("INSERT INTO events (mac, kind, ts) VALUES (?,?,?)",
+                                  (dev["mac"], kind, now))
+            self.conn.commit()
+        events.extend(leaves)
         return events
 
 # ---------------------------------------------------------------- vendor lookup
@@ -272,3 +293,78 @@ def scanner_loop(cfg, tracker, net, local_ip, baseline):
         except Exception:
             log.exception("sweep failed")
         time.sleep(max(0, cfg["scan_interval_sec"] - (time.time() - start)))
+
+# ---------------------------------------------------------------- passive sniffer (optional)
+
+def sniffer_loop(cfg, tracker, net, notify_cb):
+    """Optional passive listener: ARP/DHCP traffic gives near-instant (~1-3s) join
+    detection, a complement to the periodic active sweep() used by scanner_loop.
+    Requires `pip install scapy` and Npcap (Windows) / libpcap (Linux/macOS); when
+    either is missing this logs one line and returns, leaving detection to the
+    active sweep exactly as before this feature existed. Never raises.
+
+    Wiring (in netwatch.py's run(), started alongside the existing scanner_loop
+    thread and sharing the same tracker/net):
+
+        threading.Thread(target=sniffer_loop, args=(cfg, tracker, net, notify_cb),
+                         daemon=True).start()
+
+    `notify_cb(kind, dev)` should match what scanner_loop does for each event, e.g.:
+
+        def notify_cb(kind, dev):
+            if dev.get("notify", 1):
+                notify(cfg, kind, dev)
+
+    cfg["passive"]: "auto" (default) = use the sniffer if available, silently fall
+    back otherwise; True = same, but warn (not just info-log) if unavailable;
+    False = disabled, this function returns immediately.
+    """
+    mode = cfg.get("passive", "auto")
+    if mode is False:
+        return
+    warn = log.warning if mode is True else log.info
+
+    try:
+        from scapy.all import AsyncSniffer, ARP, DHCP, BOOTP
+    except Exception:
+        warn("passive sniffing unavailable (scapy not installed); using active sweep only")
+        return
+
+    def set_hostname(mac, hostname):
+        with DB_LOCK:
+            r = tracker.conn.execute("SELECT auto_name FROM devices WHERE mac=?", (mac,)).fetchone()
+            if r is not None and not r["auto_name"]:
+                tracker.conn.execute("UPDATE devices SET auto_name=? WHERE mac=?", (hostname, mac))
+                tracker.conn.commit()
+
+    def handler(pkt):
+        try:
+            mac = ip = hostname = None
+            if pkt.haslayer(ARP):
+                mac, ip = normalize_mac(pkt[ARP].hwsrc), pkt[ARP].psrc
+            elif pkt.haslayer(BOOTP):
+                mac = normalize_mac(pkt[BOOTP].chaddr[:6].hex(":"))
+                ip = pkt[BOOTP].yiaddr if pkt[BOOTP].yiaddr not in (None, "0.0.0.0") else pkt[BOOTP].ciaddr
+                if pkt.haslayer(DHCP):
+                    for opt in pkt[DHCP].options:  # option 12 = hostname
+                        if isinstance(opt, tuple) and opt[0] == "hostname":
+                            hostname = opt[1].decode() if isinstance(opt[1], bytes) else opt[1]
+            if not mac or not ip or int(mac[:2], 16) & 1:
+                return  # no address, or multicast/broadcast source
+            if ip in (None, "0.0.0.0") or ipaddress.ip_address(ip) not in net:
+                return
+            for kind, dev in tracker.mark_present(mac, ip, int(time.time())):
+                notify_cb(kind, dev)
+            if hostname:
+                set_hostname(mac, hostname)
+        except Exception:
+            log.exception("passive sniffer: bad packet")
+
+    try:
+        AsyncSniffer(filter="arp or (udp and (port 67 or 68))", prn=handler, store=False).start()
+    except Exception as e:
+        warn("passive sniffing unavailable (scapy/Npcap missing or no permission): %s", e)
+        return
+
+    log.info("passive sniffer active (ARP/DHCP)")
+    threading.Event().wait()  # AsyncSniffer runs in its own thread; keep this daemon alive
