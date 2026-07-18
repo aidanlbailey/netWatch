@@ -18,6 +18,16 @@
   .nick input { font: inherit; padding: .1rem .3rem; width: 9rem; }
   ul { padding-left: 1.2rem; font-size: .9rem; }
   li { margin: .2rem 0; }
+  #detection { font-size: .9rem; }
+  .det-on { color: #197; } .det-off { color: #a60; } .det-bad { color: #b00; }
+  details { margin: 1rem 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  .config-form { margin-top: .6rem; }
+  .config-form label { display: block; margin: .4rem 0; }
+  .config-form input, .config-form select { font: inherit; padding: .2rem; }
+  .config-form fieldset { margin: .6rem 0; max-width: 22rem; }
+  .config-form small { color: #777; }
+  #cfgMsg { margin-left: .6rem; font-size: .9rem; }
 </style>
 </head>
 <body>
@@ -40,6 +50,37 @@
   &ndash;
   <input type="number" id="quietEnd" min="0" max="23" placeholder="end">
 </p>
+<p id="detection"></p>
+
+<details id="configPanel">
+  <summary>Settings (edit config)</summary>
+  <div class="config-form">
+    <label>Subnet <input id="cfgSubnet" placeholder="auto-detect"></label>
+    <label>Scan interval (seconds) <input type="number" id="cfgInterval" min="2" max="3600"></label>
+    <label>Enhanced detection
+      <select id="cfgPassive">
+        <option value="auto">Auto (use if available)</option>
+        <option value="true">On</option>
+        <option value="false">Off</option>
+      </select>
+      <small>(needs a restart to take effect)</small>
+    </label>
+    <label>Discord webhook URL <input id="cfgWebhook" size="40"></label>
+    <label>Discord user ID <input id="cfgUserId"></label>
+    <fieldset>
+      <legend>Email (SMTP)</legend>
+      <label>Host <input id="cfgSmtpHost"></label>
+      <label>Port <input type="number" id="cfgSmtpPort"></label>
+      <label>Username <input id="cfgSmtpUser"></label>
+      <label>Password <input type="password" id="cfgSmtpPass" placeholder="(unchanged)"></label>
+      <label>From <input id="cfgSmtpFrom"></label>
+      <label>To <input id="cfgSmtpTo"></label>
+    </fieldset>
+    <button id="cfgSave">Save config</button>
+    <span id="cfgMsg"></span>
+  </div>
+</details>
+
 <h2>Devices</h2>
 <p id="whosHome"></p>
 <div class="tablewrap"><table>
@@ -99,6 +140,60 @@ function quietVal(el) { return el.value === "" ? null : Number(el.value); }
   body: JSON.stringify({ offline_after_misses: Number(slider.value),
                          quiet_start: quietVal(quietStart), quiet_end: quietVal(quietEnd) }),
 })));
+
+const DETECTION = {
+  active: ["Enhanced detection: on (instant joins via passive sniffing)", "det-on"],
+  disabled: ["Enhanced detection: off — turn it on in Settings below", "det-off"],
+  unavailable: ["Enhanced detection: unavailable — run  pip install scapy  (plus Npcap on Windows), then restart the service", "det-bad"],
+};
+function renderDetection(status) {
+  const el = document.getElementById("detection");
+  const [text, cls] = DETECTION[status] || ["", ""];
+  el.textContent = text;
+  el.className = cls;
+}
+
+// Config editor: load into fields the first time the panel opens, save on button.
+const configPanel = document.getElementById("configPanel");
+let configLoaded = false;
+configPanel.addEventListener("toggle", () => {
+  if (configPanel.open && !configLoaded) { loadConfig(); configLoaded = true; }
+});
+async function loadConfig() {
+  const res = await fetch("/api/config");
+  if (res.status === 401) { location = "/login"; return; }
+  const c = await res.json();
+  cfgSubnet.value = c.subnet || "";
+  cfgInterval.value = c.scan_interval_sec;
+  cfgPassive.value = String(c.passive);
+  cfgWebhook.value = c.discord.webhook_url || "";
+  cfgUserId.value = c.discord.mention_user_id || "";
+  cfgSmtpHost.value = c.smtp.host || "";
+  cfgSmtpPort.value = c.smtp.port || "";
+  cfgSmtpUser.value = c.smtp.username || "";
+  cfgSmtpFrom.value = c.smtp.from_addr || "";
+  cfgSmtpTo.value = c.smtp.to_addr || "";
+  cfgSmtpPass.placeholder = c.smtp.password_set ? "(unchanged — leave blank to keep)" : "(none)";
+}
+document.getElementById("cfgSave").onclick = async () => {
+  const passive = { auto: "auto", true: true, false: false }[cfgPassive.value];
+  const body = {
+    subnet: cfgSubnet.value, scan_interval_sec: Number(cfgInterval.value), passive,
+    webhook_url: cfgWebhook.value, mention_user_id: cfgUserId.value,
+    smtp: { host: cfgSmtpHost.value, port: Number(cfgSmtpPort.value) || 587,
+            username: cfgSmtpUser.value, from_addr: cfgSmtpFrom.value, to_addr: cfgSmtpTo.value,
+            password: cfgSmtpPass.value },
+  };
+  const res = await fetch("/api/config", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  const r = await res.json();
+  const msg = document.getElementById("cfgMsg");
+  msg.textContent = res.ok
+    ? (r.restart_needed ? "Saved. Restart the service for subnet/detection changes to apply." : "Saved.")
+    : ("Error: " + (r.error || res.status));
+  cfgSmtpPass.value = "";
+};
 
 function ago(ts) {
   const s = Math.max(0, serverNow - ts);
@@ -205,6 +300,7 @@ async function refresh() {
   }
   if (document.activeElement !== quietStart) quietStart.value = data.quiet_hours?.start ?? "";
   if (document.activeElement !== quietEnd) quietEnd.value = data.quiet_hours?.end ?? "";
+  renderDetection(data.sniffer_status);
 
   const tbody = document.getElementById("devices");
   tbody.replaceChildren(...data.devices.map(d => {

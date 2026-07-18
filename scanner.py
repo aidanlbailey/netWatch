@@ -391,6 +391,11 @@ def scanner_loop(cfg, tracker, net, local_ip, baseline):
 
 # ---------------------------------------------------------------- passive sniffer (optional)
 
+# Enhanced (instant) detection state, read by the dashboard:
+# "disabled" (passive=false), "unavailable" (scapy/Npcap missing), "active" (running).
+sniffer_status = "disabled"
+
+
 def sniffer_loop(cfg, tracker, net, notify_cb):
     """Optional passive listener: ARP/DHCP traffic gives near-instant (~1-3s) join
     detection, a complement to the periodic active sweep() used by scanner_loop.
@@ -414,14 +419,17 @@ def sniffer_loop(cfg, tracker, net, notify_cb):
     back otherwise; True = same, but warn (not just info-log) if unavailable;
     False = disabled, this function returns immediately.
     """
+    global sniffer_status
     mode = cfg.get("passive", "auto")
     if mode is False:
+        sniffer_status = "disabled"
         return
     warn = log.warning if mode is True else log.info
 
     try:
         from scapy.all import AsyncSniffer, ARP, DHCP, BOOTP
     except Exception:
+        sniffer_status = "unavailable"
         warn("passive sniffing unavailable (scapy not installed); using active sweep only")
         return
 
@@ -459,8 +467,10 @@ def sniffer_loop(cfg, tracker, net, notify_cb):
         sniffer = AsyncSniffer(filter="arp or (udp and (port 67 or 68))", prn=handler, store=False)
         sniffer.start()
     except Exception as e:
+        sniffer_status = "unavailable"
         warn("passive sniffing unavailable (scapy/Npcap missing or no permission): %s", e)
         return
 
+    sniffer_status = "active"
     log.info("passive sniffer active (ARP/DHCP)")
     sniffer.join()  # AsyncSniffer runs in its own thread; keep this daemon alive on it

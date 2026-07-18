@@ -2,6 +2,7 @@
 import logging
 import time
 
+import scanner
 from common import BASE, check_password, save_config
 from notify import notify
 from scanner import DB_LOCK
@@ -93,7 +94,8 @@ def create_app(cfg, conn, tracker):
         return jsonify(devices=devices, events=events, now=int(time.time()),
                        offline_after_misses=tracker.offline_after,
                        scan_interval_sec=cfg["scan_interval_sec"], summary=summary,
-                       quiet_hours=cfg.get("quiet_hours", {"start": None, "end": None}))
+                       quiet_hours=cfg.get("quiet_hours", {"start": None, "end": None}),
+                       sniffer_status=scanner.sniffer_status)
 
     @app.get("/api/history/<mac>")
     def api_history(mac):
@@ -152,6 +154,56 @@ def create_app(cfg, conn, tracker):
         save_config(cfg)
         log.info("offline_after_misses set to %d via dashboard", misses)
         return jsonify(ok=True, offline_after_misses=misses, quiet_hours=cfg["quiet_hours"])
+
+    @app.get("/api/config")
+    def api_config_get():
+        if not authed():
+            return jsonify(error="unauthorized"), 401
+        d, s = cfg.get("discord", {}), cfg.get("smtp", {})
+        return jsonify(  # never expose password_hash / secret_key; smtp password is write-only
+            subnet=cfg.get("subnet"), scan_interval_sec=cfg.get("scan_interval_sec", 12),
+            passive=cfg.get("passive", "auto"),
+            discord={"webhook_url": d.get("webhook_url", ""), "mention_user_id": d.get("mention_user_id", "")},
+            smtp={"host": s.get("host", ""), "port": s.get("port", 587), "username": s.get("username", ""),
+                  "from_addr": s.get("from_addr", ""), "to_addr": s.get("to_addr", ""),
+                  "password_set": bool(s.get("password"))})
+
+    @app.post("/api/config")
+    def api_config_post():
+        if not authed():
+            return jsonify(error="unauthorized"), 401
+        if not request.is_json:
+            return jsonify(error="json required"), 400
+        b = request.get_json()
+        if "subnet" in b:
+            cfg["subnet"] = (b["subnet"] or "").strip() or None
+        if "scan_interval_sec" in b:
+            try:
+                cfg["scan_interval_sec"] = max(2, min(3600, int(b["scan_interval_sec"])))
+            except (TypeError, ValueError):
+                return jsonify(error="scan_interval_sec must be an integer"), 400
+        if "passive" in b:
+            if b["passive"] not in ("auto", True, False):
+                return jsonify(error="passive must be 'auto', true, or false"), 400
+            cfg["passive"] = b["passive"]
+        for k in ("webhook_url", "mention_user_id"):
+            if k in b:
+                cfg["discord"][k] = (b[k] or "").strip()
+        smtp = b.get("smtp") or {}
+        for k in ("host", "username", "from_addr", "to_addr"):
+            if k in smtp:
+                cfg["smtp"][k] = (smtp[k] or "").strip()
+        if "port" in smtp:
+            try:
+                cfg["smtp"]["port"] = int(smtp["port"])
+            except (TypeError, ValueError):
+                return jsonify(error="smtp.port must be an integer"), 400
+        if smtp.get("password"):  # only overwrite when a new one is supplied
+            cfg["smtp"]["password"] = smtp["password"]
+        save_config(cfg)
+        log.info("config updated via dashboard")
+        # subnet/passive/bind changes only fully apply on restart; note that to the UI
+        return jsonify(ok=True, restart_needed="passive" in b or "subnet" in b)
 
     @app.post("/api/notify")
     def api_notify():
