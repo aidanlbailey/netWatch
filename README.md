@@ -5,8 +5,9 @@ notifications and serves a password-protected dashboard on your LAN.
 
 Every ~12 s it ARP-probes every host in the subnet (SendARP on Windows,
 ping + neighbor state on Linux). Joins are detected within ~15 s. A device is
-marked offline after ~5 min of missed sweeps, since idle phones stop answering
-for short stretches. No admin rights or capture drivers needed.
+marked offline after ~5 min of missed sweeps, since [idle phones stop answering
+for short stretches](https://discussions.apple.com/thread/255083854?answerId=259469966022&sortBy=rank#259469966022).
+No admin rights or capture drivers needed.
 
 ## Install
 
