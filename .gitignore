@@ -4,3 +4,4 @@ netwatch.db
 *.log.*
 __pycache__/
 venv/
+.claude/

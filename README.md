@@ -131,12 +131,16 @@ permission" in the logs). Grant the capability to the interpreter the service
 runs, then restart:
 
 ```
-sudo setcap cap_net_raw,cap_net_admin+eip "$(readlink -f "$(which python3)")"
+PY=$(systemctl --user cat netwatch | awk -F'"' '/ExecStart=/{print $2}')
+sudo setcap cap_net_raw,cap_net_admin+eip "$(readlink -f "$PY")"
 systemctl --user restart netwatch
 ```
 
-This lets that Python open raw sockets without running the whole service as
-root. On Windows, installing Npcap grants the equivalent access.
+Deriving the interpreter from the unit matters: the service runs whichever
+Python installed it (possibly a venv), which is not always the `python3` on
+your PATH. Verify with `getcap "$(readlink -f "$PY")"`. This lets that Python
+open raw sockets without running the whole service as root. On Windows,
+installing Npcap grants the equivalent access.
 
 ## Limits
 
