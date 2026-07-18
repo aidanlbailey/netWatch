@@ -88,10 +88,21 @@ def create_app(cfg, conn, tracker):
             events = [dict(r) for r in conn.execute(
                 "SELECT e.kind, e.ts, e.mac, d.nickname, d.auto_name, d.vendor FROM events e "
                 "LEFT JOIN devices d USING(mac) ORDER BY e.id DESC LIMIT 50")]
+        summary = {"online": sum(1 for d in devices if d["online"]),
+                   "tracked_online": sum(1 for d in devices if d["online"] and d["notify"])}
         return jsonify(devices=devices, events=events, now=int(time.time()),
                        offline_after_misses=tracker.offline_after,
-                       scan_interval_sec=cfg["scan_interval_sec"],
+                       scan_interval_sec=cfg["scan_interval_sec"], summary=summary,
                        quiet_hours=cfg.get("quiet_hours", {"start": None, "end": None}))
+
+    @app.get("/api/history/<mac>")
+    def api_history(mac):
+        if not authed():
+            return jsonify(error="unauthorized"), 401
+        with DB_LOCK:
+            rows = [dict(r) for r in conn.execute(
+                "SELECT kind, ts FROM events WHERE mac=? ORDER BY id DESC LIMIT 100", (mac,))]
+        return jsonify(rows)
 
     @app.post("/api/nickname")
     def api_nickname():

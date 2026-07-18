@@ -41,6 +41,7 @@
   <input type="number" id="quietEnd" min="0" max="23" placeholder="end">
 </p>
 <h2>Devices</h2>
+<p id="whosHome"></p>
 <div class="tablewrap"><table>
   <thead><tr><th>Status</th><th>Nickname</th><th>IP</th><th>MAC</th><th>Vendor</th><th>First seen</th><th>Last seen</th><th>Notify<br><button id="notifyAll" title="Select or deselect all devices">all</button></th></tr></thead>
   <tbody id="devices"></tbody>
@@ -118,6 +119,52 @@ function name(d) {
   return d.nickname || d.auto_name || d.vendor || d.mac;
 }
 
+function duration(secs) {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+let expandedMac = null;
+
+function historyRow(events) {
+  const tr = document.createElement("tr");
+  tr.id = "historyRow";
+  const cell = document.createElement("td");
+  cell.colSpan = 8;
+  const ul = document.createElement("ul");
+  events.forEach((e, i) => {
+    const li = document.createElement("li");
+    let text = `${e.kind === "join" ? "Joined" : "Left"} — ${ago(e.ts)}`;
+    if (e.kind === "leave" && events[i + 1] && events[i + 1].kind === "join") {
+      text += ` (online ${duration(e.ts - events[i + 1].ts)})`;
+    }
+    li.textContent = text;
+    ul.append(li);
+  });
+  cell.append(ul.children.length ? ul : document.createTextNode("No history yet."));
+  tr.append(cell);
+  return tr;
+}
+
+async function renderExpansion() {
+  const existing = document.getElementById("historyRow");
+  if (existing) existing.remove();
+  if (!expandedMac) return;
+  const row = document.querySelector(`tr[data-mac="${expandedMac}"]`);
+  if (!row) return;
+  const res = await fetch(`/api/history/${expandedMac}`);
+  if (res.status === 401) { location = "/login"; return; }
+  const events = await res.json();
+  if (expandedMac !== row.dataset.mac) return;
+  row.after(historyRow(events));
+}
+
+function toggleHistory(mac) {
+  expandedMac = expandedMac === mac ? null : mac;
+  renderExpansion();
+}
+
 function editNickname(cell, dev) {
   const input = document.createElement("input");
   input.value = dev.nickname || "";
@@ -147,6 +194,11 @@ async function refresh() {
   serverNow = data.now;
   scanInterval = data.scan_interval_sec;
   lastDevices = data.devices;
+  if (data.summary) {
+    const s = data.summary;
+    document.getElementById("whosHome").textContent =
+      `${s.online} device${s.online === 1 ? "" : "s"} online (${s.tracked_online} tracked)`;
+  }
   if (document.activeElement !== slider) {
     slider.value = data.offline_after_misses;
     missesLabel.textContent = missesText(slider.value);
@@ -158,6 +210,11 @@ async function refresh() {
   tbody.replaceChildren(...data.devices.map(d => {
     const tr = document.createElement("tr");
     tr.className = d.online ? "online" : "offline";
+    tr.dataset.mac = d.mac;
+    const statusCell = td(d.online ? "online" : "offline");
+    statusCell.style.cursor = "pointer";
+    statusCell.title = "Click for join/leave history";
+    statusCell.onclick = () => toggleHistory(d.mac);
     const nickCell = td(d.nickname || d.auto_name || "add name", "nick");
     nickCell.title = "click to rename, right-click to reset";
     nickCell.onclick = () => editNickname(nickCell, d);
@@ -180,11 +237,12 @@ async function refresh() {
     });
     const chkCell = document.createElement("td");
     chkCell.append(sel);
-    tr.append(td(d.online ? "online" : "offline"), nickCell, td(d.ip), td(d.mac),
+    tr.append(statusCell, nickCell, td(d.ip), td(d.mac),
               td(d.vendor || ""), td(ago(d.first_seen)),
               td(d.online ? "—" : ago(d.last_seen)), chkCell);
     return tr;
   }));
+  renderExpansion();
 
   document.getElementById("events").replaceChildren(...data.events.map(e => {
     const li = document.createElement("li");
