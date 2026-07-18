@@ -19,10 +19,12 @@ No admin rights or capture drivers needed.
   Test button. Per-device modes (off / all events / new-device-only) and global
   quiet hours.
 - **Dashboard** — who's-home summary, device table, per-device presence timeline
-  (click a device's status), adjustable offline grace period.
+  (click a device's status), adjustable offline grace period, and a Settings
+  panel to edit config (subnet, notifications, detection) without leaving the page.
 - **Optional instant detection** — install scapy (plus Npcap on Windows) to add
-  passive ARP/DHCP sniffing for ~1-3 s join detection. Without it, the active
-  sweep covers everything; nothing else changes.
+  passive ARP/DHCP sniffing for ~1-3 s join detection. The dashboard shows
+  whether it's active and how to enable it. Without it, the active sweep covers
+  everything; nothing else changes.
 - Runs 24/7 as a Scheduled Task (Windows) or systemd user unit (Linux).
 
 ## Install
