@@ -1,13 +1,29 @@
 # netWatch
 
-Tracks devices joining and leaving your home LAN. Sends Discord and/or email
-notifications and serves a password-protected dashboard on your LAN.
+Tracks devices joining and leaving your home LAN. Names devices automatically,
+sends Discord and/or email notifications, and serves a password-protected
+dashboard on your LAN with per-device controls and presence history.
 
 Every ~12 s it ARP-probes every host in the subnet (SendARP on Windows,
 ping + neighbor state on Linux). Joins are detected within ~15 s. A device is
 marked offline after ~5 min of missed sweeps, since [idle phones stop answering
 for short stretches](https://discussions.apple.com/thread/255083854?answerId=259469966022&sortBy=rank#259469966022).
 No admin rights or capture drivers needed.
+
+## Features
+
+- **Auto-naming** — devices label themselves via reverse-DNS and NetBIOS (and
+  DHCP hostnames when the sniffer is on), so you see "living-room-tv" instead of
+  a MAC. Override any name with a nickname (right-click a nickname to reset it).
+- **Notifications** — Discord webhook and/or SMTP email on join/leave, with a
+  Test button. Per-device modes (off / all events / new-device-only) and global
+  quiet hours.
+- **Dashboard** — who's-home summary, device table, per-device presence timeline
+  (click a device's status), adjustable offline grace period.
+- **Optional instant detection** — install scapy (plus Npcap on Windows) to add
+  passive ARP/DHCP sniffing for ~1-3 s join detection. Without it, the active
+  sweep covers everything; nothing else changes.
+- Runs 24/7 as a Scheduled Task (Windows) or systemd user unit (Linux).
 
 ## Install
 
@@ -85,8 +101,22 @@ Edits to config.json apply within one sweep. Changes to `bind_host`,
 | `subnet` | `null` auto-detects the local /24. Pin it (e.g. `"192.168.1.0/24"`) if you use a VPN, otherwise the VPN's subnet gets scanned. |
 | `scan_interval_sec` | sweep frequency |
 | `offline_after_misses` | missed sweeps before a leave fires. Adjustable with the dashboard slider. Default 25 (~5 min). Lower it if you only track always-on devices. |
+| `passive` | `"auto"` uses the scapy sniffer if available, else the sweep only. `true` forces it (warns if unavailable), `false` disables it. |
+| `quiet_hours` | `{"start": null, "end": null}` = off. Set hours (0-23, wraps past midnight) to suppress all notifications during that window. Editable from the dashboard. |
 | `bind_host` / `bind_port` | dashboard listen address |
 | `db_path` | SQLite file, relative to the script |
+
+## Instant detection (optional)
+
+For ~1-3 s join detection instead of ~15 s, install the sniffer:
+
+```
+pip install scapy          # plus Npcap on Windows: https://npcap.com
+```
+
+netWatch picks it up automatically (`passive: "auto"`). It passively watches
+ARP/DHCP to catch devices the instant they announce themselves; the active
+sweep still runs for leave detection. Without scapy, nothing changes.
 
 ## Limits
 
